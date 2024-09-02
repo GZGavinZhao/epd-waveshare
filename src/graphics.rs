@@ -339,6 +339,8 @@ fn set_pixel<COLOR: ColorType + PixelColor>(
 
     let index = x as usize * COLOR::BITS_PER_PIXEL_PER_BUFFER / 8
         + y as usize * line_bytes(width, COLOR::BITS_PER_PIXEL_PER_BUFFER);
+    // `mask` clears the color at the existing pixel,
+    // then `bits` set the pixel to the desired color.
     let (mask, bits) = color.bitmask(bwrbit, x as u32);
 
     if COLOR::BUFFER_COUNT == 2 {

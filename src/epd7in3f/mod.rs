@@ -14,7 +14,7 @@ use embedded_hal::{
 
 use crate::{
     buffer_len,
-    color::OctColor,
+    color::{ColorType, OctColor},
     interface::DisplayInterface,
     traits::{InternalWiAdditions, WaveshareDisplay},
 };
@@ -29,7 +29,10 @@ pub type Display7in3f = crate::graphics::Display<
     WIDTH,
     HEIGHT,
     false,
-    { buffer_len(WIDTH as usize, HEIGHT as usize * 4) },
+    {
+        buffer_len(WIDTH as usize, HEIGHT as usize) * OctColor::BITS_PER_PIXEL_PER_BUFFER
+            / (8 * size_of::<u8>())
+    },
     OctColor,
 >;
 
@@ -154,15 +157,36 @@ where
 
     fn update_partial_frame(
         &mut self,
-        _spi: &mut SPI,
-        _delay: &mut DELAY,
-        _buffer: &[u8],
-        _x: u32,
-        _y: u32,
-        _width: u32,
-        _height: u32,
+        spi: &mut SPI,
+        delay: &mut DELAY,
+        buffer: &[u8],
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
     ) -> Result<(), <SPI>::Error> {
-        unimplemented!()
+        self.wait_until_idle(spi, delay)?;
+
+        let buf = PartialBuffer::new(
+            buffer,
+            x,
+            y,
+            width,
+            height,
+            self.width(),
+            self.height(),
+            *self.background_color(),
+        );
+
+        self.cmd_with_data_iter(
+            spi,
+            Command::DataStartTransmission,
+            buf,
+            //SameIterator {
+            //    cur: 0,
+            //    n: WIDTH * HEIGHT / 2,
+            //},
+        )
     }
 
     fn display_frame(&mut self, spi: &mut SPI, delay: &mut DELAY) -> Result<(), <SPI>::Error> {
@@ -234,6 +258,18 @@ where
         self.interface.cmd_with_data(spi, command, data)
     }
 
+    fn cmd_with_data_iter<I>(
+        &mut self,
+        spi: &mut SPI,
+        command: Command,
+        data: I,
+    ) -> Result<(), SPI::Error>
+    where
+        I: Iterator<Item = u8>,
+    {
+        self.interface.cmd_with_data_iter(spi, command, data)
+    }
+
     fn wait_busy_low(&mut self, delay: &mut DELAY) {
         self.interface.wait_until_idle(delay, true);
     }
@@ -271,5 +307,92 @@ where
         }
 
         self.display_frame(spi, delay)
+    }
+}
+
+struct PartialBuffer<'a> {
+    buffer: &'a [u8],
+    x: u32,
+    y: u32,
+    bufw: u32,
+    bufh: u32,
+    width: u32,
+    height: u32,
+    default: OctColor,
+    curx: u32,
+    cury: u32,
+}
+
+impl<'a> PartialBuffer<'a> {
+    fn new(
+        buffer: &'a [u8],
+        x: u32,
+        y: u32,
+        bufw: u32,
+        bufh: u32,
+        width: u32,
+        height: u32,
+        default: OctColor,
+    ) -> Self {
+        Self {
+            buffer,
+            x,
+            y,
+            bufw,
+            bufh,
+            width,
+            height,
+            default,
+            curx: 0,
+            cury: 0,
+        }
+    }
+
+    fn getpixel(&self, x: u32, y: u32) -> u8 {
+        //let shift = (1 - x % 2) * 4;
+        let (_, bits) = self.default.bitmask(false, x);
+
+        if self.x <= x && x < (self.x + self.bufw) && self.y <= y && y < (self.y + self.bufh) {
+            let bufx = x - self.x;
+            let bufy = y - self.y;
+            let (mask, _) = self.default.bitmask(false, bufx);
+            let actual_idx = (self.bufw * bufy / 2 + bufx / 2) as usize;
+            // mask hides this pixel's color and shows everyone else, so by flipping it we hide
+            // everyone else and only show the current pixel.
+            let actual_color = self.buffer[actual_idx] & !mask /* << actual_shift */;
+
+            if self.x % 2 == 0 {
+                return actual_color;
+            } else {
+                if bufx % 2 == 0 {
+                    return actual_color >> 4;
+                } else {
+                    return actual_color << 4;
+                }
+            }
+        } else {
+            return bits as u8;
+        }
+    }
+}
+
+impl<'a> Iterator for PartialBuffer<'a> {
+    type Item = u8;
+
+    // Since each pixel takes up 4 bits, in each iteration we're passing in 2 pixels (u8 = 8 bits).
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cury >= self.height {
+            return None;
+        }
+
+        let res = self.getpixel(self.curx, self.cury) | self.getpixel(self.curx + 1, self.cury);
+        self.curx += 2;
+
+        if self.curx >= self.width {
+            self.cury += 1;
+            self.curx = 0;
+        }
+
+        Some(res)
     }
 }
