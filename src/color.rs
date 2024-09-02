@@ -124,9 +124,10 @@ impl ColorType for OctColor {
     const BITS_PER_PIXEL_PER_BUFFER: usize = 4;
     const BUFFER_COUNT: usize = 1;
     fn bitmask(&self, _bwrbit: bool, pos: u32) -> (u8, u16) {
-        let mask = !(0xF0 >> (pos % 2));
+        // 0b00001111 if even and 0b11110000 if odd
+        let mask = !(0xF0 >> ((pos % 2) * 4));
         let bits = self.get_nibble() as u16;
-        (mask, if pos % 2 == 1 { bits } else { bits << 4 })
+        (mask, bits << ((1 - pos % 2) * 4))
     }
 }
 
