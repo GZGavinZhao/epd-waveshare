@@ -76,6 +76,26 @@ where
         Ok(())
     }
 
+    /// Same as [data], except that it takes in an iterator.
+    pub(crate) fn data_iter<I>(&mut self, spi: &mut SPI, data: I) -> Result<(), SPI::Error>
+    where
+        I: Iterator<Item = u8>,
+    {
+        // high for data
+        let _ = self.dc.set_high();
+
+        if SINGLE_BYTE_WRITE {
+            for val in data {
+                // Transfer data one u8 at a time over spi
+                self.write(spi, &[val])?;
+            }
+        } else {
+            todo!();
+        }
+
+        Ok(())
+    }
+
     /// Basic function for sending [Commands](Command) and the data belonging to it.
     ///
     /// TODO: directly use ::write? cs wouldn't needed to be changed twice than
@@ -87,6 +107,19 @@ where
     ) -> Result<(), SPI::Error> {
         self.cmd(spi, command)?;
         self.data(spi, data)
+    }
+
+    pub(crate) fn cmd_with_data_iter<T: Command, I>(
+        &mut self,
+        spi: &mut SPI,
+        command: T,
+        data: I,
+    ) -> Result<(), SPI::Error>
+    where
+        I: Iterator<Item = u8>,
+    {
+        self.cmd(spi, command)?;
+        self.data_iter(spi, data)
     }
 
     /// Basic function for sending the same byte of data (one u8) multiple times over spi
